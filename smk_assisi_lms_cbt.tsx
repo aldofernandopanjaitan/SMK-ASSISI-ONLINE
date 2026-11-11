@@ -1,0 +1,795 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+    Users, BookOpen, Calendar, Clock, MapPin, 
+    FileText, CheckCircle, XCircle, AlertTriangle,
+    LogOut, Edit, Trash2, Plus, QrCode, Upload,
+    ChevronLeft, ChevronRight, Play, Camera
+} from 'lucide-react';
+
+// --- MOCK DATA ---
+const MOCK_USERS = [
+    { id: 1, username: 'admin', password: '123', role: 'admin', name: 'Administrator' },
+    { id: 2, username: 'guru', password: '123', role: 'guru', name: 'Bpk. Budi Santoso' },
+    { id: 3, username: 'siswa', password: '123', role: 'siswa', name: 'Andi Saputra', kelas: '10 RPL' }
+];
+
+const INITIAL_JADWAL_UJIAN = [
+    { id: 1, date: '2026-11-10', time: '08:00 - 10:00', subject: 'Matematika', location: 'SMK SWASTA ASSISI', classes: '10 RPL, 10 TB', room: 'Ruang 1', session: 'Sesi 1', studentCount: 30, proctor: 'Bpk. Budi Santoso' },
+];
+
+const INITIAL_JADWAL_SEKOLAH = [
+    { id: 1, date: '2026-11-10', time: '10:15 - 12:15', subject: 'Pemrograman Web', location: 'SMK SWASTA ASSISI', classes: '10 RPL', studentCount: 30, teacher: 'Ibu Ratna' },
+];
+
+const INITIAL_MATERI = [
+    { id: 1, date: '2026-11-09', title: 'Hidup Sehat di Era Digital', subject: 'IPA', classes: '10 RPL, 11 TB', file: 'hidup_sehat.pdf', teacher: 'Bpk. Budi Santoso' }
+];
+
+const MOCK_EXAM = {
+    id: 1,
+    subject: 'Matematika - Logika Dasar',
+    durationMinutes: 1, // Set to 1 minute for quick testing of auto-submit
+    questions: [
+        {
+            id: 'q1',
+            type: 'mcq',
+            text: 'Apa arti dari hidup dari guru? (Contoh soal dari prompt)',
+            options: ['A. Hidup sehat', 'B. Hidup kotor', 'C. Hidup malas', 'D. Hidup Rajin', 'E. Hidup suka'],
+            correctAnswer: 'A. Hidup sehat' // Asumsi A benar
+        },
+        {
+            id: 'q2',
+            type: 'mcq',
+            text: 'Berapa hasil dari 5 x 5?',
+            options: ['A. 10', 'B. 20', 'C. 25', 'D. 30', 'E. 35'],
+            correctAnswer: 'C. 25'
+        },
+        {
+            id: 'q3',
+            type: 'essay',
+            text: 'Apa makna hidup sehat menurut anda?',
+            correctAnswerKeyword: 'sehat' // Simulasi validasi keyword
+        }
+    ]
+};
+
+// --- HELPER COMPONENTS ---
+const Modal = ({ isOpen, onClose, title, children }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center p-4 border-b border-gray-100">
+                    <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+                    <button onClick={onClose} className="p-2 text-gray-500 hover:bg-red-50 hover:text-red-500 rounded-full transition"><XCircle size={24} /></button>
+                </div>
+                <div className="p-4">{children}</div>
+            </div>
+        </div>
+    );
+};
+
+const CustomButton = ({ onClick, variant = 'primary', icon: Icon, children, className = '' }) => {
+    const baseStyle = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200 transform active:scale-95";
+    const variants = {
+        primary: "bg-red-600 text-white hover:bg-red-700 shadow-md hover:shadow-lg",
+        secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
+        danger: "bg-red-100 text-red-700 hover:bg-red-200",
+        success: "bg-green-500 text-white hover:bg-green-600 shadow-md"
+    };
+    return (
+        <button onClick={onClick} className={`${baseStyle} ${variants[variant]} ${className}`}>
+            {Icon && <Icon size={18} />}
+            {children}
+        </button>
+    );
+};
+
+// --- MAIN APPLICATION COMPONENT ---
+export default function App() {
+    // Application State
+    const [user, setUser] = useState(null);
+    const [view, setView] = useState('login'); // login, dashboard, exam, examResult
+    const [activeTab, setActiveTab] = useState('jadwalUjian'); // For Admin/Guru Dashboard
+    
+    // Data States
+    const [jadwalUjian, setJadwalUjian] = useState(INITIAL_JADWAL_UJIAN);
+    const [jadwalSekolah, setJadwalSekolah] = useState(INITIAL_JADWAL_SEKOLAH);
+    const [materi, setMateri] = useState(INITIAL_MATERI);
+
+    // Exam States
+    const [examTimeLeft, setExamTimeLeft] = useState(0);
+    const [examAnswers, setExamAnswers] = useState({});
+    const [isCheating, setIsCheating] = useState(false);
+    const audioCtxRef = useRef(null);
+
+    // Form States
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [modalType, setModalType] = useState(''); // add, edit
+    const [formData, setFormData] = useState({});
+
+    // Generate dates for horizontal scroller (mocking Nov 2026)
+    const dates = Array.from({length: 14}, (_, i) => {
+        const d = new Date(2026, 10, i + 5); // Start Nov 5, 2026
+        const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+        return { 
+            dayStr: days[d.getDay()], 
+            dateNum: d.getDate(), 
+            fullDate: d.toISOString().split('T')[0],
+            isToday: d.getDate() === 10 // Mock today is Nov 10
+        };
+    });
+    const [selectedDate, setSelectedDate] = useState('2026-11-10');
+
+    // --- AUDIO WARNING UTILITY ---
+    const playWarningSound = () => {
+        if (!audioCtxRef.current) {
+            audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const ctx = audioCtxRef.current;
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(440, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
+        
+        gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+    };
+
+    // --- EXAM ANTI-CHEAT & TIMER LOGIC ---
+    useEffect(() => {
+        if (view === 'exam') {
+            const handleVisibilityChange = () => {
+                if (document.visibilityState === 'hidden' || document.hidden) {
+                    setIsCheating(true);
+                    playWarningSound();
+                }
+            };
+            const handleBlur = () => {
+                setIsCheating(true);
+                playWarningSound();
+            };
+
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+            window.addEventListener("blur", handleBlur);
+
+            // Timer
+            const timer = setInterval(() => {
+                setExamTimeLeft((prev) => {
+                    if (prev <= 1) {
+                        clearInterval(timer);
+                        handleExamSubmit();
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+
+            return () => {
+                document.removeEventListener("visibilitychange", handleVisibilityChange);
+                window.removeEventListener("blur", handleBlur);
+                clearInterval(timer);
+            };
+        }
+    }, [view]);
+
+    // --- HANDLERS ---
+    const handleLogin = (e) => {
+        e.preventDefault();
+        const u = e.target.username.value;
+        const p = e.target.password.value;
+        const foundUser = MOCK_USERS.find(user => user.username === u && user.password === p);
+        
+        if (foundUser) {
+            setUser(foundUser);
+            setView('dashboard');
+        } else {
+            // using state for error instead of alert in real app, but for simplicity here we just do nothing if failed
+            console.error("Login failed");
+        }
+    };
+
+    const handleLogout = () => {
+        setUser(null);
+        setView('login');
+    };
+
+    const startExam = () => {
+        setExamTimeLeft(MOCK_EXAM.durationMinutes * 60);
+        setExamAnswers({});
+        setIsCheating(false);
+        setView('exam');
+    };
+
+    const handleExamSubmit = () => {
+        setView('examResult');
+    };
+
+    const handleAnswerChange = (qId, value) => {
+        setExamAnswers(prev => ({ ...prev, [qId]: value }));
+    };
+
+    const formatTime = (seconds) => {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    // CRUD Handlers
+    const openModal = (type, tab, item = null) => {
+        setModalType(type);
+        if (item) setFormData(item);
+        else setFormData({ date: selectedDate }); // default new item to selected date
+        setIsModalOpen(true);
+    };
+
+    const handleSave = (e) => {
+        e.preventDefault();
+        const data = { ...formData, id: formData.id || Date.now() };
+        
+        if (activeTab === 'jadwalUjian') {
+            if (modalType === 'add') setJadwalUjian([...jadwalUjian, data]);
+            else setJadwalUjian(jadwalUjian.map(item => item.id === data.id ? data : item));
+        } else if (activeTab === 'jadwalSekolah') {
+            if (modalType === 'add') setJadwalSekolah([...jadwalSekolah, data]);
+            else setJadwalSekolah(jadwalSekolah.map(item => item.id === data.id ? data : item));
+        } else if (activeTab === 'materi') {
+            if (modalType === 'add') setMateri([...materi, data]);
+            else setMateri(materi.map(item => item.id === data.id ? data : item));
+        }
+        setIsModalOpen(false);
+    };
+
+    const handleDelete = (id, tab) => {
+        // Real app should use a confirmation modal, avoiding window.confirm as per rules
+        if (tab === 'jadwalUjian') setJadwalUjian(jadwalUjian.filter(item => item.id !== id));
+        if (tab === 'jadwalSekolah') setJadwalSekolah(jadwalSekolah.filter(item => item.id !== id));
+        if (tab === 'materi') setMateri(materi.filter(item => item.id !== id));
+    };
+
+    const simulateQRScan = () => {
+        // Simulates scanning process
+        setView('scanLoading');
+        setTimeout(() => {
+            setView('dashboard');
+        }, 1500);
+    };
+
+    // --- RENDERERS ---
+
+    const renderLogin = () => (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
+                <div className="bg-red-600 p-8 text-center text-white">
+                    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                        <BookOpen size={40} className="text-red-600" />
+                    </div>
+                    <h1 className="text-2xl font-bold uppercase tracking-wider">SMK SWASTA ASSISI</h1>
+                    <p className="text-red-100 text-sm mt-2">LMS & CBT Portal</p>
+                </div>
+                <div className="p-8">
+                    <form onSubmit={handleLogin} className="space-y-6">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
+                            <input name="username" type="text" defaultValue="admin" required className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-200 outline-none transition-all" placeholder="Masukkan username" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                            <input name="password" type="password" defaultValue="123" required className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-200 outline-none transition-all" placeholder="Masukkan password" />
+                        </div>
+                        <div className="text-xs text-gray-500 mb-4">
+                            Hint: admin/123, guru/123, siswa/123
+                        </div>
+                        <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg shadow-md hover:shadow-lg transition-all transform active:scale-95">
+                            Login ke Sistem
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+
+    const renderDateScroller = () => (
+        <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar items-center px-2">
+            {dates.map((d, idx) => (
+                <button 
+                    key={idx}
+                    onClick={() => setSelectedDate(d.fullDate)}
+                    className={`flex flex-col items-center justify-center min-w-[64px] h-20 rounded-2xl border-2 transition-all ${
+                        selectedDate === d.fullDate 
+                        ? 'bg-red-600 text-white border-red-600 shadow-md transform scale-105' 
+                        : d.isToday 
+                            ? 'bg-white text-gray-800 border-red-200 shadow-sm' 
+                            : 'bg-white text-gray-500 border-transparent hover:border-gray-200 shadow-sm'
+                    }`}
+                >
+                    <span className="text-xs font-semibold uppercase mb-1">{d.dayStr}</span>
+                    <span className={`text-xl font-bold ${selectedDate === d.fullDate ? 'text-white' : 'text-gray-800'}`}>{d.dateNum}</span>
+                </button>
+            ))}
+        </div>
+    );
+
+    const renderDashboard = () => {
+        const isAdminOrGuru = user.role === 'admin' || user.role === 'guru';
+
+        // Filter data by selected date
+        const currentJadwalUjian = jadwalUjian.filter(j => j.date === selectedDate);
+        const currentJadwalSekolah = jadwalSekolah.filter(j => j.date === selectedDate);
+        
+        return (
+            <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
+                {/* Mobile Header */}
+                <div className="md:hidden bg-red-600 text-white p-4 flex justify-between items-center sticky top-0 z-20 shadow-md">
+                    <div className="font-bold">SMK ASSISI</div>
+                    <button onClick={handleLogout}><LogOut size={20} /></button>
+                </div>
+
+                {/* Sidebar (Desktop) */}
+                <div className="hidden md:flex w-64 bg-white shadow-xl flex-col h-screen sticky top-0 z-20">
+                    <div className="bg-red-600 p-6 text-white text-center">
+                        <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-md">
+                            <BookOpen size={30} className="text-red-600" />
+                        </div>
+                        <h2 className="font-bold text-lg leading-tight">SMK SWASTA ASSISI</h2>
+                    </div>
+                    <div className="p-4 flex-1">
+                        <div className="text-xs text-gray-400 font-bold uppercase mb-4 tracking-wider">Menu Utama</div>
+                        <nav className="space-y-2">
+                            {isAdminOrGuru && (
+                                <>
+                                    <button onClick={() => setActiveTab('jadwalUjian')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'jadwalUjian' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Calendar size={20} /> Jadwal Ujian</button>
+                                    <button onClick={() => setActiveTab('jadwalSekolah')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'jadwalSekolah' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Clock size={20} /> Jadwal Sekolah</button>
+                                    <button onClick={() => setActiveTab('materi')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'materi' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><FileText size={20} /> Materi Belajar</button>
+                                </>
+                            )}
+                            {user.role === 'siswa' && (
+                                <>
+                                    <button onClick={() => setActiveTab('jadwalUjian')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'jadwalUjian' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Calendar size={20} /> Jadwal Saya</button>
+                                    <button onClick={() => setActiveTab('materi')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'materi' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><FileText size={20} /> Materi Belajar</button>
+                                    <button onClick={() => setActiveTab('ujian')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition ${activeTab === 'ujian' ? 'bg-red-50 text-red-600 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Edit size={20} /> Ujian / CBT</button>
+                                </>
+                            )}
+                        </nav>
+                    </div>
+                    <div className="p-4 border-t">
+                        <div className="flex items-center gap-3 mb-4 px-2">
+                            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden"><Users size={20} className="text-gray-500"/></div>
+                            <div>
+                                <p className="text-sm font-bold text-gray-800">{user.name}</p>
+                                <p className="text-xs text-gray-500 capitalize">{user.role} {user.kelas ? `- ${user.kelas}` : ''}</p>
+                            </div>
+                        </div>
+                        <CustomButton onClick={handleLogout} variant="secondary" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50" icon={LogOut}>Logout</CustomButton>
+                    </div>
+                </div>
+
+                {/* Main Content */}
+                <div className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-5xl mx-auto">
+                    
+                    {/* Header Info */}
+                    <div className="mb-8 hidden md:flex justify-between items-center">
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-800 capitalize">Dashboard {user.role}</h1>
+                            <p className="text-gray-500">Selamat datang kembali, {user.name}</p>
+                        </div>
+                        <div className="flex gap-2">
+                             <CustomButton onClick={simulateQRScan} variant="primary" icon={QrCode}>Presensi QR</CustomButton>
+                        </div>
+                    </div>
+                    <div className="mb-6 md:hidden">
+                        <CustomButton onClick={simulateQRScan} variant="primary" icon={QrCode} className="w-full">Presensi QR (Hadir)</CustomButton>
+                    </div>
+
+                    {/* Date Picker (Image 3 Ref) */}
+                    {(activeTab === 'jadwalUjian' || activeTab === 'jadwalSekolah') && (
+                        <div className="mb-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="font-bold text-gray-800 text-lg">Kalender Kegiatan</h3>
+                                <span className="text-sm bg-red-100 text-red-700 py-1 px-3 rounded-full font-medium">{selectedDate}</span>
+                            </div>
+                            {renderDateScroller()}
+                        </div>
+                    )}
+
+                    {/* Content Area */}
+                    <div className="space-y-4">
+                        
+                        {/* Tab: Jadwal Ujian */}
+                        {activeTab === 'jadwalUjian' && (
+                            <>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-xl font-bold text-gray-800">Jadwal Ujian</h2>
+                                    {isAdminOrGuru && <CustomButton onClick={() => openModal('add', 'jadwalUjian')} icon={Plus}>Tambah</CustomButton>}
+                                </div>
+                                {currentJadwalUjian.length === 0 ? (
+                                    <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-gray-100 text-gray-500">Tidak ada jadwal ujian untuk tanggal ini.</div>
+                                ) : currentJadwalUjian.map(item => (
+                                    <div key={item.id} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition relative">
+                                        {/* Timeline decoration */}
+                                        <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-gray-200"></div>
+                                        
+                                        <div className="flex flex-col md:flex-row gap-4">
+                                            {/* Time Column */}
+                                            <div className="relative z-10 flex flex-col items-center min-w-[80px]">
+                                                <div className="bg-yellow-100 text-yellow-800 font-bold px-3 py-1 rounded-lg text-sm mb-8">{item.time.split('-')[0].trim()}</div>
+                                                <div className="bg-yellow-100 text-yellow-800 font-bold px-3 py-1 rounded-lg text-sm">{item.time.split('-')[1]?.trim()}</div>
+                                            </div>
+                                            
+                                            {/* Info Column */}
+                                            <div className="flex-1">
+                                                <h3 className="text-lg font-bold text-gray-800 uppercase tracking-wide flex items-center gap-2">
+                                                    <Clock size={18} className="text-gray-400" />
+                                                    UJIAN - {item.subject}
+                                                </h3>
+                                                
+                                                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-y-2 text-sm text-gray-600">
+                                                    <div className="flex"><span className="w-28 font-medium">Lokasi</span> <span className="font-bold text-gray-800">: {item.location}</span></div>
+                                                    <div className="flex"><span className="w-28 font-medium">Kelas</span> <span className="font-bold text-gray-800">: {item.classes}</span></div>
+                                                    <div className="flex"><span className="w-28 font-medium">Ruang</span> <span className="font-bold text-gray-800">: {item.room}</span></div>
+                                                    <div className="flex"><span className="w-28 font-medium">Sesi</span> <span className="font-bold text-gray-800">: {item.session}</span></div>
+                                                    <div className="flex"><span className="w-28 font-medium">Jumlah Siswa</span> <span className="font-bold text-gray-800">: {item.studentCount} Siswa</span></div>
+                                                    <div className="flex"><span className="w-28 font-medium">Pengawas</span> <span className="font-bold text-gray-800">: {item.proctor}</span></div>
+                                                </div>
+
+                                                {isAdminOrGuru && (
+                                                    <div className="mt-4 flex gap-2 justify-end border-t pt-4">
+                                                        <CustomButton onClick={() => openModal('edit', 'jadwalUjian', item)} variant="secondary" icon={Edit}>Edit</CustomButton>
+                                                        <CustomButton onClick={() => handleDelete(item.id, 'jadwalUjian')} variant="danger" icon={Trash2}>Hapus</CustomButton>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+
+                        {/* Tab: Jadwal Sekolah */}
+                        {activeTab === 'jadwalSekolah' && (
+                            <>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-xl font-bold text-gray-800">Jadwal Pelajaran</h2>
+                                    {isAdminOrGuru && <CustomButton onClick={() => openModal('add', 'jadwalSekolah')} icon={Plus}>Tambah</CustomButton>}
+                                </div>
+                                {currentJadwalSekolah.length === 0 ? (
+                                    <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-gray-100 text-gray-500">Tidak ada jadwal pelajaran untuk tanggal ini.</div>
+                                ) : currentJadwalSekolah.map(item => (
+                                    <div key={item.id} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <span className="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold mb-2">MAPEL UMUM</span>
+                                                <h3 className="text-lg font-bold text-gray-800">{item.subject}</h3>
+                                                <div className="text-sm text-gray-500 mt-1 flex items-center gap-1"><Clock size={14}/> {item.time}</div>
+                                            </div>
+                                            <div className="text-right text-sm">
+                                                <div className="font-bold text-gray-800">{item.classes}</div>
+                                                <div className="text-gray-500">{item.teacher}</div>
+                                            </div>
+                                        </div>
+                                        {isAdminOrGuru && (
+                                            <div className="mt-4 flex gap-2 justify-end border-t pt-4">
+                                                <CustomButton onClick={() => openModal('edit', 'jadwalSekolah', item)} variant="secondary" icon={Edit}>Edit</CustomButton>
+                                                <CustomButton onClick={() => handleDelete(item.id, 'jadwalSekolah')} variant="danger" icon={Trash2}>Hapus</CustomButton>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </>
+                        )}
+
+                        {/* Tab: Materi */}
+                        {activeTab === 'materi' && (
+                            <>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-xl font-bold text-gray-800">Materi Pembelajaran</h2>
+                                    {isAdminOrGuru && <CustomButton onClick={() => openModal('add', 'materi')} icon={Plus}>Upload Materi</CustomButton>}
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {materi.map(item => (
+                                        <div key={item.id} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                                            <div className="flex gap-4">
+                                                <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center text-red-600 flex-shrink-0">
+                                                    <FileText size={24} />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h3 className="font-bold text-gray-800 line-clamp-1">{item.title}</h3>
+                                                    <p className="text-sm text-gray-500 mb-2">{item.subject} • Kls: {item.classes}</p>
+                                                    <div className="text-xs text-gray-400 mb-3">Oleh: {item.teacher} • {item.date}</div>
+                                                    
+                                                    <div className="flex gap-2">
+                                                        <CustomButton variant="secondary" className="text-xs py-1 px-3"><Upload size={14} className="mr-1"/> Download</CustomButton>
+                                                        {isAdminOrGuru && <button onClick={() => handleDelete(item.id, 'materi')} className="text-red-500 p-1 hover:bg-red-50 rounded"><Trash2 size={16}/></button>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {/* Tab: Ujian (Siswa Only) */}
+                        {activeTab === 'ujian' && user.role === 'siswa' && (
+                            <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 text-center">
+                                <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Edit size={32} className="text-red-600" />
+                                </div>
+                                <h3 className="text-xl font-bold text-gray-800 mb-2">{MOCK_EXAM.subject}</h3>
+                                <p className="text-gray-500 mb-6">Durasi: {MOCK_EXAM.durationMinutes} Menit • {MOCK_EXAM.questions.length} Soal</p>
+                                <CustomButton onClick={startExam} variant="primary" icon={Play} className="mx-auto w-full max-w-xs">Kerjakan Ujian Sekarang</CustomButton>
+                            </div>
+                        )}
+
+                    </div>
+                </div>
+
+                {/* --- MODALS FOR CRUD --- */}
+                <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`${modalType === 'add' ? 'Tambah' : 'Edit'} Data`}>
+                    <form onSubmit={handleSave} className="space-y-4">
+                        {/* Common Field */}
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Tanggal (YYYY-MM-DD)</label>
+                            <input type="date" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full border rounded p-2" required />
+                        </div>
+                        
+                        {(activeTab === 'jadwalUjian' || activeTab === 'jadwalSekolah') && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Mata Pelajaran/Ujian</label>
+                                    <input type="text" value={formData.subject || ''} onChange={e => setFormData({...formData, subject: e.target.value})} className="w-full border rounded p-2" required placeholder="Contoh: Matematika" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Jam Mulai - Selesai</label>
+                                        <input type="text" value={formData.time || ''} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full border rounded p-2" required placeholder="08:00 - 10:00" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Kelas</label>
+                                        <input type="text" value={formData.classes || ''} onChange={e => setFormData({...formData, classes: e.target.value})} className="w-full border rounded p-2" required placeholder="10 RPL, 11 TB" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Lokasi</label>
+                                    <input type="text" value={formData.location || 'SMK SWASTA ASSISI'} onChange={e => setFormData({...formData, location: e.target.value})} className="w-full border rounded p-2" required />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Jumlah Siswa</label>
+                                    <input type="number" value={formData.studentCount || ''} onChange={e => setFormData({...formData, studentCount: e.target.value})} className="w-full border rounded p-2" required />
+                                </div>
+                            </>
+                        )}
+
+                        {activeTab === 'jadwalUjian' && (
+                            <>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Ruang</label>
+                                        <input type="text" value={formData.room || ''} onChange={e => setFormData({...formData, room: e.target.value})} className="w-full border rounded p-2" required placeholder="Ruang 1" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Sesi</label>
+                                        <input type="text" value={formData.session || ''} onChange={e => setFormData({...formData, session: e.target.value})} className="w-full border rounded p-2" required placeholder="Sesi 1" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Pengawas</label>
+                                    <input type="text" value={formData.proctor || ''} onChange={e => setFormData({...formData, proctor: e.target.value})} className="w-full border rounded p-2" required />
+                                </div>
+                            </>
+                        )}
+
+                        {activeTab === 'jadwalSekolah' && (
+                            <div>
+                                <label className="block text-sm font-medium mb-1">Guru Pengajar</label>
+                                <input type="text" value={formData.teacher || ''} onChange={e => setFormData({...formData, teacher: e.target.value})} className="w-full border rounded p-2" required />
+                            </div>
+                        )}
+
+                        {activeTab === 'materi' && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Judul Materi</label>
+                                    <input type="text" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full border rounded p-2" required />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Mata Pelajaran</label>
+                                        <input type="text" value={formData.subject || ''} onChange={e => setFormData({...formData, subject: e.target.value})} className="w-full border rounded p-2" required />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Kelas</label>
+                                        <input type="text" value={formData.classes || ''} onChange={e => setFormData({...formData, classes: e.target.value})} className="w-full border rounded p-2" required />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Oleh (Guru)</label>
+                                    <input type="text" value={formData.teacher || ''} onChange={e => setFormData({...formData, teacher: e.target.value})} className="w-full border rounded p-2" required />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Upload File (Simulasi)</label>
+                                    <input type="file" className="w-full border rounded p-2 text-sm" />
+                                </div>
+                            </>
+                        )}
+
+                        <div className="flex gap-2 justify-end pt-4 border-t">
+                            <CustomButton type="button" onClick={() => setIsModalOpen(false)} variant="secondary">Batal</CustomButton>
+                            <CustomButton type="submit" variant="primary">Simpan Data</CustomButton>
+                        </div>
+                    </form>
+                </Modal>
+            </div>
+        );
+    };
+
+    const renderExam = () => {
+        return (
+            <div className="min-h-screen bg-gray-100 flex flex-col fixed inset-0 z-50">
+                {/* Exam Header */}
+                <div className="bg-white shadow-md p-4 flex justify-between items-center border-b-4 border-red-600">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-red-100 text-red-600 p-2 rounded-lg"><Edit size={24}/></div>
+                        <div>
+                            <h1 className="font-bold text-gray-800 text-lg leading-tight">{MOCK_EXAM.subject}</h1>
+                            <p className="text-xs text-gray-500">{user.name} - {user.kelas}</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <div className={`text-xl font-mono font-bold px-4 py-2 rounded-lg ${examTimeLeft < 60 ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-800'}`}>
+                            {formatTime(examTimeLeft)}
+                        </div>
+                        <CustomButton onClick={handleExamSubmit} variant="primary">Kumpul Sekarang</CustomButton>
+                    </div>
+                </div>
+
+                {/* Cheating Warning Modal */}
+                {isCheating && (
+                    <div className="fixed inset-0 bg-red-600 bg-opacity-95 z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-2xl transform scale-110 animate-pulse">
+                            <AlertTriangle size={64} className="text-red-600 mx-auto mb-4" />
+                            <h2 className="text-2xl font-bold text-red-600 mb-2">PERINGATAN!</h2>
+                            <p className="text-gray-700 font-medium mb-6">Anda terdeteksi keluar dari layar ujian atau membuka tab lain. Pencarian jawaban menggunakan Google/AI dilarang keras!</p>
+                            <CustomButton onClick={() => setIsCheating(false)} variant="primary" className="w-full">Saya Mengerti, Kembali Ujian</CustomButton>
+                        </div>
+                    </div>
+                )}
+
+                {/* Questions Content */}
+                <div className="flex-1 overflow-y-auto p-4 md:p-8">
+                    <div className="max-w-4xl mx-auto space-y-6 pb-20">
+                        {MOCK_EXAM.questions.map((q, index) => (
+                            <div key={q.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-800 mb-4 flex gap-3">
+                                    <span className="bg-gray-100 text-gray-600 w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0">{index + 1}</span>
+                                    <span className="mt-1">{q.text}</span>
+                                </h3>
+                                
+                                {q.type === 'mcq' ? (
+                                    <div className="space-y-2 ml-11">
+                                        {q.options.map((opt, i) => (
+                                            <label key={i} className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-colors ${examAnswers[q.id] === opt ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                                <input 
+                                                    type="radio" 
+                                                    name={q.id} 
+                                                    value={opt} 
+                                                    checked={examAnswers[q.id] === opt}
+                                                    onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                                                    className="w-5 h-5 text-red-600 focus:ring-red-500"
+                                                />
+                                                <span className="text-gray-700">{opt}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="ml-11">
+                                        <textarea 
+                                            rows="5"
+                                            className="w-full border border-gray-300 rounded-xl p-4 focus:ring-2 focus:ring-red-200 focus:border-red-500 outline-none"
+                                            placeholder="Ketik jawaban essay Anda di sini (100 - 900 kata)..."
+                                            value={examAnswers[q.id] || ''}
+                                            onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                                        ></textarea>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderExamResult = () => {
+        let correctCount = 0;
+        
+        return (
+            <div className="min-h-screen bg-gray-50 p-4 md:p-8 flex justify-center items-start">
+                <div className="bg-white max-w-4xl w-full rounded-2xl shadow-xl p-6 md:p-8">
+                    <div className="text-center mb-8 border-b pb-6">
+                        <CheckCircle size={64} className="text-green-500 mx-auto mb-4" />
+                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Ujian Selesai</h1>
+                        <p className="text-gray-500">Hasil pengerjaan {MOCK_EXAM.subject}</p>
+                    </div>
+
+                    <div className="space-y-8">
+                        {MOCK_EXAM.questions.map((q, index) => {
+                            const userAnswer = examAnswers[q.id];
+                            let isCorrect = false;
+                            
+                            if (q.type === 'mcq') {
+                                isCorrect = userAnswer === q.correctAnswer;
+                                if(isCorrect) correctCount++;
+                            } else {
+                                // Simple essay check simulation
+                                isCorrect = userAnswer && userAnswer.toLowerCase().includes(q.correctAnswerKeyword.toLowerCase());
+                                if(isCorrect) correctCount++;
+                            }
+
+                            return (
+                                <div key={q.id} className="border rounded-xl p-6 relative">
+                                    <div className={`absolute top-0 right-0 rounded-bl-xl rounded-tr-xl px-4 py-1 text-sm font-bold text-white ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`}>
+                                        {isCorrect ? 'BENAR' : 'SALAH'}
+                                    </div>
+                                    <h3 className="font-bold text-gray-800 mb-4">{index + 1}. {q.text}</h3>
+                                    
+                                    <div className="mb-4">
+                                        <p className="text-sm text-gray-500 mb-1">Jawaban Anda:</p>
+                                        <div className={`p-3 rounded-lg border font-medium ${isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                                            {userAnswer || '- Tidak dijawab -'}
+                                        </div>
+                                    </div>
+
+                                    {!isCorrect && (
+                                        <div>
+                                            <p className="text-sm text-gray-500 mb-1">Kunci Jawaban Benar:</p>
+                                            <div className="p-3 rounded-lg border bg-green-50 border-green-200 text-green-800 font-medium">
+                                                {q.type === 'mcq' ? q.correctAnswer : `Jawaban harus mengandung kata/konsep: "${q.correctAnswerKeyword}"`}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="mt-8 flex justify-center">
+                        <CustomButton onClick={() => setView('dashboard')} variant="primary" icon={ChevronLeft}>Kembali ke Dashboard</CustomButton>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderScanLoading = () => (
+        <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center text-white">
+            <Camera size={64} className="mb-4 text-gray-400 animate-pulse" />
+            <h2 className="text-2xl font-bold mb-2">Memindai QR Code...</h2>
+            <div className="w-64 h-64 border-4 border-red-500 rounded-3xl relative mt-4">
+                <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-[scan_2s_ease-in-out_infinite]"></div>
+            </div>
+            <p className="mt-8 text-green-400 font-bold text-xl opacity-0 animate-[fadein_0.5s_ease-in_1s_forwards]">Presensi Berhasil Dicatat!</p>
+            <style dangerouslySetInnerHTML={{__html: `
+                @keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
+                @keyframes fadein { to { opacity: 1; } }
+            `}} />
+        </div>
+    );
+
+    // --- MAIN RENDER LOGIC ---
+    if (view === 'login') return renderLogin();
+    if (view === 'scanLoading') return renderScanLoading();
+    if (view === 'exam') return renderExam();
+    if (view === 'examResult') return renderExamResult();
+    if (user) return renderDashboard();
+
+    return null;
+}
